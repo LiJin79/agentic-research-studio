@@ -1,0 +1,211 @@
+name: ai-agentic-rag
+
+# API 与 worker 必须使用同一模型配置；.env 仅在这里显式注入。
+x-backend-env: &backend-env
+  POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-agent_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-agent_db}
+  LANGGRAPH_POSTGRES_DSN: postgresql://${POSTGRES_USER:-agent_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-agent_db}
+  LANGGRAPH_STRICT_MSGPACK: "true"
+  REDIS_URL: redis://redis:6379/0
+  QDRANT_URL: http://qdrant:6333
+  QDRANT_COLLECTION: ${QDRANT_COLLECTION:-agent_documents}
+  LLM_PROVIDER: ${LLM_PROVIDER:-dashscope}
+  LLM_MODEL: ${LLM_MODEL:-qwen-plus}
+  LLM_BASE_URL: ${LLM_BASE_URL_DOCKER:-${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-120}
+  LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+  LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
+  LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+  # 生成模型菜单的候选配置；API Key 始终只注入后端，不进入前端镜像。
+  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+  DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+  MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+  MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M3}
+  MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-https://api.minimax.cn/v1}
+  MINIMAX_MAX_TOKENS: ${MINIMAX_MAX_TOKENS:-8192}
+  ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
+  ZHIPU_MODEL: ${ZHIPU_MODEL:-glm-4.7}
+  ZHIPU_BASE_URL: ${ZHIPU_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+  OLLAMA_ENABLED: ${OLLAMA_ENABLED:-false}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL_DOCKER:-${OLLAMA_BASE_URL:-http://ollama:11434}}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-dashscope}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v4}
+  EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL_DOCKER:-${EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
+  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-10}
+  TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+  WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-bocha}
+  BOCHA_API_KEY: ${BOCHA_API_KEY:-}
+  BOCHA_BASE_URL: ${BOCHA_BASE_URL:-https://api.bocha.cn}
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  CONTEXT7_API_KEY: ${CONTEXT7_API_KEY:-}
+  AMAP_API_KEY: ${AMAP_API_KEY:-}
+  QWEATHER_API_KEY: ${QWEATHER_API_KEY:-}
+  QWEATHER_API_HOST: ${QWEATHER_API_HOST:-}
+  TOOL_TIMEOUT_SECONDS: ${TOOL_TIMEOUT_SECONDS:-15}
+  TOOL_MAX_RESPONSE_BYTES: ${TOOL_MAX_RESPONSE_BYTES:-2000000}
+  TOOL_MAX_CALLS: ${TOOL_MAX_CALLS:-9}
+  WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-5}
+  AGENT_MAX_REVISIONS: ${AGENT_MAX_REVISIONS:-2}
+  AGENT_MAX_TOOL_ITERATIONS: ${AGENT_MAX_TOOL_ITERATIONS:-3}
+  CHAT_TIMEOUT_SECONDS: ${CHAT_TIMEOUT_SECONDS:-300}
+  CHAT_RATE_LIMIT_PER_MINUTE: ${CHAT_RATE_LIMIT_PER_MINUTE:-30}
+  HISTORY_MAX_CHARACTERS: ${HISTORY_MAX_CHARACTERS:-12000}
+  CONTEXT_MAX_CHARACTERS: ${CONTEXT_MAX_CHARACTERS:-16000}
+  CONTEXT_MAX_SOURCES: ${CONTEXT_MAX_SOURCES:-12}
+  EVIDENCE_MAX_CHARACTERS: ${EVIDENCE_MAX_CHARACTERS:-2400}
+  RETRIEVAL_MIN_SCORE: ${RETRIEVAL_MIN_SCORE:-0.25}
+  SEARCH_CACHE_SECONDS: ${SEARCH_CACHE_SECONDS:-300}
+  CHUNK_SIZE: ${CHUNK_SIZE:-800}
+  CHUNK_OVERLAP: ${CHUNK_OVERLAP:-120}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+  UPLOAD_DIR: data/uploads
+  APP_ACCESS_TOKEN: ${APP_ACCESS_TOKEN:-}
+  INGESTION_TIMEOUT_SECONDS: ${INGESTION_TIMEOUT_SECONDS:-600}
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ai_agent_api
+    environment: *backend-env
+    ports: ["127.0.0.1:8001:8001"]
+    volumes: ["./data/uploads:/app/data/uploads"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/v1/health/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks: [agentic-net]
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ai_agent_worker
+    command: python -m app.workers.ingestion
+    environment: *backend-env
+    volumes: ["./data/uploads:/app/data/uploads"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [agentic-net]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: ai_agent_frontend
+    ports: ["127.0.0.1:8080:80"]
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [agentic-net]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ai_agent_migrate
+    command: python -m app.db.initialize
+    environment: *backend-env
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [agentic-net]
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: ai_agent_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agent_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_db}
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: ["./data/postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent_user} -d ${POSTGRES_DB:-agent_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [agentic-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai_agent_redis
+    # noeviction 避免内存压力驱逐正在生效的会话锁。
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    ports: ["127.0.0.1:6380:6379"]
+    volumes: ["./data/redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [agentic-net]
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ai_agent_qdrant
+    ports: ["127.0.0.1:6335:6333", "127.0.0.1:6336:6334"]
+    volumes: ["./data/qdrant:/qdrant/storage"]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [agentic-net]
+
+  # 保留本地技术入口。只有显式 --profile local-llm 才启动，不默认占用 GPU。
+  ollama:
+    profiles: ["local-llm"]
+    image: ollama/ollama:latest
+    container_name: ai_agent_ollama
+    ports: ["127.0.0.1:11435:11434"]
+    volumes: ["./data/ollama:/root/.ollama"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [agentic-net]
+
+  ollama-init:
+    profiles: ["local-llm"]
+    image: ollama/ollama:latest
+    container_name: ai_agent_ollama_init
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    # 官方镜像 ENTRYPOINT 是 ollama；先覆盖才能执行 shell 中的两次 pull。
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull ${LLM_MODEL:-qwen2.5:1.5b} && ollama pull ${EMBEDDING_MODEL:-nomic-embed-text}"]
+    depends_on:
+      ollama: {condition: service_healthy}
+    networks: [agentic-net]
+
+networks:
+  agentic-net:
+    driver: bridge

@@ -1,0 +1,40 @@
+.env
+.venv/
+.uv-cache/
+.npm-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+node_modules/
+.idea/
+.vscode/
+data/
+ollama_data/
+uploads/
+
+# Local environment files
+.env.*
+!/.env.example
+
+# Personal resumes and local verification outputs
+docs/resume/
+docs/resume-*.md
+docs/*.docx
+evaluation/
+
+# Local document generation helpers
+scripts/create_resume_draft.py
+scripts/create_resume_designed.py
+scripts/fill_resume_ppt_template.ps1
+scripts/inspect_resume_template.ps1
+scripts/render_resume.ps1
+scripts/create_learning_plan_doc.py
+
+# Temporary files and logs
+*.log
+*.tmp
+*.bak
